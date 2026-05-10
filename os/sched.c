@@ -14,6 +14,14 @@ void sched_init() {
     init_queue(&task_queue);
 }
 
+static int quantum_for_priority(int priority) {
+    return FULL_QUANTUM - priority * 2;
+}
+
+static uint64 get_ticks_snapshot() {
+    return __atomic_load_n(&ticks, __ATOMIC_RELAXED);
+}
+
 static struct proc *fetch_task() {
     struct proc *proc = pop_queue(&task_queue);
     if (proc != NULL)
@@ -25,6 +33,7 @@ void add_task(struct proc *p) {
     assert(p->state == RUNNABLE);
     assert(holding(&p->lock));
 
+    p->ready_since = get_ticks_snapshot();
     push_queue(&task_queue, p);
     debugf("add task (pid=%d) to task queue", p->pid);
 }
@@ -80,6 +89,7 @@ void scheduler() {
         acquire(&p->lock);
         assert(p->state == RUNNABLE);
         debugf("switch to proc %d(%d)", p->index, p->pid);
+        p->wait_time += get_ticks_snapshot() - p->ready_since;
         p->state = RUNNING;
         c->proc  = p;
         swtch(&c->sched_context, &p->context);
@@ -148,7 +158,23 @@ void setpriority(int priority) {
     if (priority < 0 || priority >= 10)
         return;
 
-    // TODO:
-    
-    return ;
+    acquire(&p->lock);
+    p->priority       = priority;
+    p->remain_quantum = quantum_for_priority(priority);
+    release(&p->lock);
+}
+
+int sched_consume_tick() {
+    struct proc *p = curr_proc();
+    int should_yield = 0;
+
+    acquire(&p->lock);
+    p->run_time++;
+    if (--p->remain_quantum <= 0) {
+        p->remain_quantum = quantum_for_priority(p->priority);
+        should_yield      = 1;
+    }
+    release(&p->lock);
+
+    return should_yield;
 }

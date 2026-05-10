@@ -15,6 +15,10 @@ static spinlock_t wait_lock;
 
 extern void sched_init();
 
+static uint64 get_ticks_snapshot() {
+    return __atomic_load_n(&ticks, __ATOMIC_RELAXED);
+}
+
 // initialize the proc table at boot time.
 void proc_init() {
     // we only init once.
@@ -93,9 +97,16 @@ found:
     tracef("init proc %p", p);
     p->parent     = NULL;
     p->exit_code  = 0;
+    p->priority   = 0;
+    p->remain_quantum = FULL_QUANTUM;
     p->sleep_chan = NULL;
     p->pid        = allocpid();
     p->state      = USED;
+    p->create_time = get_ticks_snapshot();
+    p->ready_since = p->create_time;
+    p->run_time    = 0;
+    p->wait_time   = 0;
+    p->exit_time   = 0;
 
     // fork or exec(load_user_elf) will initialize these:
     p->mm      = NULL;
@@ -118,10 +129,17 @@ static void freeproc(struct proc *p) {
 
     p->state      = UNUSED;
     p->pid        = -1;
+    p->priority   = 0;
+    p->remain_quantum = FULL_QUANTUM;
     p->exit_code  = 0xdeadbeef;
     p->sleep_chan = NULL;
     p->killed     = 0;
     p->parent     = NULL;
+    p->create_time = 0;
+    p->ready_since = 0;
+    p->run_time    = 0;
+    p->wait_time   = 0;
+    p->exit_time   = 0;
 
     if (p->mm) {
         assert(!holding(&p->mm->lock));
@@ -210,6 +228,9 @@ int fork() {
     // Cause fork to return 0 in the child.
     np->trapframe->a0 = 0;
     np->parent        = p;
+    np->priority      = p->priority;
+    np->remain_quantum = FULL_QUANTUM - np->priority * 2;
+    np->ready_since   = get_ticks_snapshot();
     np->state         = RUNNABLE;
     add_task(np);
     release(&np->lock);
@@ -336,8 +357,15 @@ void exit(int code) {
 
     acquire(&p->lock);
 
+    p->exit_time = get_ticks_snapshot();
     p->exit_code = code;
     p->state     = ZOMBIE;
+    printf("proc %d: priority=%d running=%lu waiting=%lu turnaround=%lu\n",
+           p->pid,
+           p->priority,
+           p->run_time,
+           p->wait_time,
+           p->exit_time - p->create_time);
 
     release(&wait_lock);
 

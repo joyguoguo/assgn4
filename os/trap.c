@@ -199,7 +199,7 @@ void usertrap() {
         exit(killed);
 
     // if it's a timer intr, call yield to give up CPU.
-    if (which_dev == 1)
+    if (which_dev == 1 && sched_consume_tick())
         yield();
 
     // prepare for return to user mode

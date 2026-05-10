@@ -50,9 +50,16 @@ struct proc {
     // p->lock must be held when accessing to these fields:
     enum procstate state;  // Process state
     int pid;               // Process ID
+    int priority;          // 0 is the highest priority
+    int remain_quantum;    // remaining time slice in ticks
     int exit_code;
     void *sleep_chan;
     int killed;
+    uint64 create_time;    // tick when the proc becomes alive
+    uint64 ready_since;    // tick when the proc enters ready queue
+    uint64 run_time;       // total running ticks in user mode
+    uint64 wait_time;      // total runnable-but-not-running ticks
+    uint64 exit_time;      // tick when the proc exits
 
     struct proc *parent;  // Parent process
 
@@ -101,6 +108,7 @@ void sched();
 void yield();
 void add_task(struct proc *);
 void setpriority(int priority);
+int sched_consume_tick();
 
 // swtch.S
 void swtch(struct context *, struct context *);
